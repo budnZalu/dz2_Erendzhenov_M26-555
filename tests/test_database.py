@@ -45,7 +45,7 @@ class CoreTests(unittest.TestCase):
                 metadata = {"existing": ["ID:int"]}
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     result = create_table(metadata, "users", columns)
-                self.assertIs(result, metadata)
+                self.assertIsNone(result)
                 self.assertEqual(metadata, {"existing": ["ID:int"]})
                 self.assertIn("Некорректное значение:", output.getvalue())
 
@@ -60,13 +60,17 @@ class CoreTests(unittest.TestCase):
         for table_name in ("", "bad-name", "two words", "123users"):
             with self.subTest(name=table_name):
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(create_table({}, table_name, ["x:int"]), {})
+                    self.assertIsNone(create_table({}, table_name, ["x:int"]))
         metadata = {"users": ["ID:int"]}
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertIs(drop_table(metadata, "missing"), metadata)
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            patch("builtins.input", return_value="y"),
+        ):
+            self.assertIsNone(drop_table(metadata, "missing"))
         self.assertEqual(metadata, {"users": ["ID:int"]})
         self.assertIn('Таблица "missing" не существует.', output.getvalue())
-        self.assertIs(drop_table(metadata, "users"), metadata)
+        with patch("builtins.input", return_value="y"):
+            self.assertIs(drop_table(metadata, "users"), metadata)
         self.assertEqual(metadata, {})
 
 
@@ -122,7 +126,7 @@ class StorageAndCliTests(unittest.TestCase):
             {"users": ["ID:int", "name:str", "age:int", "is_active:bool"]},
         )
         self.assertIn("- users", self.cli("list_tables\nexit\n"))
-        output = self.cli("drop_table users\nlist_tables\nexit\n")
+        output = self.cli("drop_table users\ny\nlist_tables\nexit\n")
         self.assertIn('Таблица "users" успешно удалена.', output)
         self.assertIn("Таблиц пока нет.", output)
         self.assertEqual(load_metadata(self.path), {})
@@ -182,7 +186,7 @@ class StorageAndCliTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
             run()
-        self.assertIn("Ошибка сохранения", output.getvalue())
+        self.assertIn("Ошибка чтения или сохранения файла", output.getvalue())
         self.assertNotIn("успешно создана", output.getvalue())
         self.assertFalse(self.path.exists())
 

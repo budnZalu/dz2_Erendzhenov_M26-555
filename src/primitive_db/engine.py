@@ -9,13 +9,11 @@ from primitive_db.core import (
     create_table,
     delete,
     drop_table,
-    get_schema,
     insert,
     select,
     update,
-    validate_clause,
-    validate_table_data,
 )
+from primitive_db.decorators import handle_db_errors
 from primitive_db.parser import CRUD_COMMANDS, parse_command
 from primitive_db.utils import (
     delete_table_data,
@@ -25,6 +23,7 @@ from primitive_db.utils import (
     save_table_data,
     table_data_path,
 )
+from primitive_db.validation import get_schema, validate_clause, validate_table_data
 
 METADATA_FILE = "db_meta.json"
 COMMANDS = {
@@ -59,7 +58,8 @@ def print_help() -> None:
     for usage, description in COMMANDS.values():
         print(f"<command> {usage} - {description}")
     print("\nТипы: int, str, bool. Строки — в кавычках; bool — true или false.")
-    print("ID:int генерируется автоматически; в insert его передавать не нужно.\n")
+    print("ID:int генерируется автоматически; в insert его передавать не нужно.")
+    print("Удаление таблиц и записей требует подтверждения: y — да, иначе отмена.\n")
 
 
 def print_table(schema, rows):
@@ -72,6 +72,7 @@ def print_table(schema, rows):
         print("Записей не найдено.")
 
 
+@handle_db_errors
 def execute_crud(metadata, parsed):
     """Загрузить данные, выполнить CRUD и сообщить об успехе после записи."""
     command = parsed["command"]
@@ -88,9 +89,13 @@ def execute_crud(metadata, parsed):
         print(f"Столбцы: {', '.join(metadata[table_name])}")
         print(f"Количество записей: {len(table_data)}")
     elif command == "select":
-        print_table(schema, select(table_data, where_clause))
+        rows = select(table_data, where_clause)
+        if rows is not None:
+            print_table(schema, rows)
     elif command == "insert":
         table_data = insert(metadata, table_name, parsed["values"], table_data)
+        if table_data is None:
+            return
         save_table_data(table_name, table_data)
         print(
             f"Запись с ID={table_data[-1]['ID']} "
@@ -100,6 +105,8 @@ def execute_crud(metadata, parsed):
         if command == "update":
             validate_clause(schema, parsed["set_clause"], updating=True)
         matched = select(table_data, where_clause)
+        if matched is None:
+            return
         if not matched:
             print("Записей не найдено.")
             return
@@ -107,6 +114,8 @@ def execute_crud(metadata, parsed):
             result = update(table_data, parsed["set_clause"], where_clause)
         else:
             result = delete(table_data, where_clause)
+        if result is None:
+            return
         save_table_data(table_name, result)
         for row in matched:
             if command == "update":
@@ -121,6 +130,7 @@ def execute_crud(metadata, parsed):
                 )
 
 
+@handle_db_errors
 def execute_table_command(metadata, command, arguments):
     """Выполнить команду управления таблицами и сохранить схему."""
     if command == "list_tables":
@@ -131,12 +141,14 @@ def execute_table_command(metadata, command, arguments):
         return
 
     previous_metadata = metadata.copy()
+    updated_metadata = metadata.copy()
     table_name = arguments[0]
     if command == "create_table":
-        create_table(metadata, table_name, arguments[1:])
+        result = create_table(updated_metadata, table_name, arguments[1:])
     else:
-        drop_table(metadata, table_name)
-    if metadata == previous_metadata:
+        get_schema(metadata, table_name)
+        result = drop_table(updated_metadata, table_name)
+    if result is None:
         return
 
     if command == "create_table" and table_data_path(table_name).exists():
@@ -144,17 +156,16 @@ def execute_table_command(metadata, command, arguments):
             f"Файл {table_data_path(table_name)} уже существует без схемы. "
             "Проверьте или перенесите его перед созданием таблицы."
         )
-    try:
-        save_metadata(METADATA_FILE, metadata)
-        if command == "drop_table":
-            try:
-                delete_table_data(table_name)
-            except OSError:
-                save_metadata(METADATA_FILE, previous_metadata)
-                raise
-    except OSError as error:
-        print(f"Ошибка сохранения {METADATA_FILE}: {error}")
-        return
+    save_metadata(METADATA_FILE, updated_metadata)
+    if command == "drop_table":
+        try:
+            delete_table_data(table_name)
+        except OSError:
+            # Это откат записи, а сообщение об ошибке выводит декоратор.
+            save_metadata(METADATA_FILE, previous_metadata)
+            raise
+    metadata.clear()
+    metadata.update(updated_metadata)
 
     if command == "create_table":
         columns = ", ".join(metadata[table_name])
@@ -215,10 +226,7 @@ def run() -> None:
             print("Исправьте файл метаданных и повторите команду.")
             continue
 
-        try:
-            if parsed is not None:
-                execute_crud(metadata, parsed)
-            else:
-                execute_table_command(metadata, command, arguments)
-        except (OSError, ValueError) as error:
-            print(f"Ошибка: {error}")
+        if parsed is not None:
+            execute_crud(metadata, parsed)
+        else:
+            execute_table_command(metadata, command, arguments)

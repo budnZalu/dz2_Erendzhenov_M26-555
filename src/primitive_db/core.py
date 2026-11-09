@@ -1,105 +1,44 @@
 """Управление схемами таблиц и операции над записями."""
 
+from primitive_db.decorators import (
+    confirm_action,
+    create_cacher,
+    handle_db_errors,
+    log_time,
+)
 from primitive_db.utils import load_table_data
+from primitive_db.validation import (
+    get_schema,
+    normalize_columns,
+    validate_clause,
+    validate_table_data,
+)
 
-SUPPORTED_TYPES = {"int": int, "str": str, "bool": bool}
-
-
-def normalize_columns(columns):
-    """Проверить столбцы и поставить единственный ID:int первым."""
-    if not columns:
-        raise ValueError(
-            "Некорректное значение: пустой список столбцов. Попробуйте снова."
-        )
-
-    names = set()
-    result = ["ID:int"]
-    for column in columns:
-        name, separator, data_type = column.partition(":")
-        if (
-            not separator
-            or not name.isidentifier()
-            or data_type not in SUPPORTED_TYPES
-            or name in names
-            or (name == "ID" and data_type != "int")
-        ):
-            raise ValueError(f"Некорректное значение: {column}. Попробуйте снова.")
-        names.add(name)
-        if name != "ID":
-            result.append(column)
-    return result
+_select_cache = create_cacher()
 
 
+@handle_db_errors
 def create_table(metadata, table_name, columns):
-    """Добавить таблицу; при ошибке вывести сообщение и сохранить метаданные."""
+    """Добавить таблицу или вернуть None, не меняя метаданные при ошибке."""
     if not table_name.isidentifier():
-        print(f"Некорректное значение: {table_name}. Попробуйте снова.")
-        return metadata
+        raise ValueError(f"Некорректное значение: {table_name}. Попробуйте снова.")
     if table_name in metadata:
-        print(f'Ошибка: Таблица "{table_name}" уже существует.')
-        return metadata
-
-    try:
-        normalized = normalize_columns(columns)
-    except ValueError as error:
-        print(error)
-        return metadata
-
-    metadata[table_name] = normalized
+        raise ValueError(f'Таблица "{table_name}" уже существует.')
+    metadata[table_name] = normalize_columns(columns)
     return metadata
 
 
+@handle_db_errors
+@confirm_action("удаление таблицы")
 def drop_table(metadata, table_name):
-    """Удалить таблицу; при ошибке вывести сообщение и сохранить метаданные."""
-    if not table_name.isidentifier():
-        print(f"Некорректное значение: {table_name}. Попробуйте снова.")
-    elif table_name not in metadata:
-        print(f'Ошибка: Таблица "{table_name}" не существует.')
-    else:
-        del metadata[table_name]
+    """После подтверждения удалить таблицу и вернуть метаданные."""
+    get_schema(metadata, table_name)
+    del metadata[table_name]
     return metadata
 
 
-def get_schema(metadata, table_name):
-    """Получить проверенную схему существующей таблицы."""
-    if not table_name.isidentifier():
-        raise ValueError(f"Некорректное имя таблицы: {table_name}.")
-    if table_name not in metadata:
-        raise ValueError(f'Таблица "{table_name}" не существует.')
-    columns = metadata[table_name]
-    if normalize_columns(columns) != columns:
-        raise ValueError(f'Некорректная структура таблицы "{table_name}".')
-    return dict(column.split(":") for column in columns)
-
-
-def validate_clause(schema, clause, *, updating=False):
-    """Проверить имена полей и точные типы значений WHERE или SET."""
-    for name, value in clause.items():
-        if name not in schema:
-            raise ValueError(f'Столбец "{name}" не существует.')
-        if updating and name == "ID":
-            raise ValueError("Изменять ID нельзя: он генерируется автоматически.")
-        if type(value) is not SUPPORTED_TYPES[schema[name]]:
-            raise ValueError(
-                f"Некорректное значение: {value!r}. "
-                f'Столбец "{name}" требует тип {schema[name]}.'
-            )
-
-
-def validate_table_data(schema, table_data):
-    """Проверить обязательные поля, типы и уникальность сохранённых ID."""
-    ids = set()
-    for row in table_data:
-        if set(row) != set(schema):
-            raise ValueError("Запись не соответствует схеме: все поля обязательны.")
-        validate_clause(schema, row)
-        if row["ID"] <= 0 or row["ID"] in ids:
-            raise ValueError(
-                "ID в файле данных должны быть положительными и уникальными."
-            )
-        ids.add(row["ID"])
-
-
+@handle_db_errors
+@log_time
 def insert(metadata, table_name, values, table_data=None):
     """Добавить типизированную запись с новым ID и вернуть данные таблицы."""
     schema = get_schema(metadata, table_name)
@@ -127,18 +66,32 @@ def _matches(row, where_clause):
     )
 
 
+def _freeze_record(record):
+    """Сформировать ключ с учётом точных типов (True отличается от 1)."""
+    return tuple(sorted((name, type(value), value) for name, value in record.items()))
+
+
+@handle_db_errors
+@log_time
 def select(table_data, where_clause=None):
-    """Вернуть все записи или записи, соответствующие условию."""
-    return [row for row in table_data if _matches(row, where_clause or {})]
+    """Кэшировать выборку по содержимому данных и вернуть независимые записи."""
+    condition = where_clause or {}
+    key = (tuple(_freeze_record(row) for row in table_data), _freeze_record(condition))
+    result = _select_cache(
+        key,
+        lambda: [row.copy() for row in table_data if _matches(row, condition)],
+    )
+    return [row.copy() for row in result]
 
 
+@handle_db_errors
 def update(table_data, set_clause, where_clause):
     """Проверить изменения, обновить все совпадения и вернуть данные."""
     if not set_clause or not where_clause:
         raise ValueError("Для update нужны непустые SET и WHERE.")
     if "ID" in set_clause:
         raise ValueError("Изменять ID нельзя: он генерируется автоматически.")
-    matched = select(table_data, where_clause)
+    matched = [row for row in table_data if _matches(row, where_clause)]
     for row in matched:
         for name, value in set_clause.items():
             if name not in row or type(value) is not type(row[name]):
@@ -148,6 +101,8 @@ def update(table_data, set_clause, where_clause):
     return table_data
 
 
+@handle_db_errors
+@confirm_action("удаление записей")
 def delete(table_data, where_clause):
     """Вернуть записи, не соответствующие обязательному условию WHERE."""
     if not where_clause:

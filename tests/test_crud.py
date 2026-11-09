@@ -112,18 +112,21 @@ class CrudCoreTests(unittest.TestCase):
         ):
             with self.subTest(values=values):
                 rows = copy.deepcopy(ROWS)
-                with self.assertRaises(ValueError):
-                    insert(METADATA, "users", values, rows)
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertIsNone(insert(METADATA, "users", values, rows))
+                self.assertIn("Ошибка валидации:", output.getvalue())
                 self.assertEqual(rows, ROWS)
-        with self.assertRaises(ValueError):
-            insert(METADATA, "absent", [])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertIsNone(insert(METADATA, "absent", []))
+        self.assertIn("не существует", output.getvalue())
 
     def test_select_and_delete_compare_bool_and_int_strictly(self):
         self.assertEqual(select(ROWS, {"age": True}), [])
         self.assertEqual(select(ROWS, {"is_active": 1}), [])
         self.assertEqual(select(ROWS, {"age": 28}), ROWS)
         self.assertEqual(select(ROWS), ROWS)
-        self.assertEqual(delete(ROWS, {"is_active": False}), [ROWS[0]])
+        with patch("builtins.input", return_value="y"):
+            self.assertEqual(delete(ROWS, {"is_active": False}), [ROWS[0]])
         self.assertEqual(len(ROWS), 2)
 
     def test_update_all_matches_and_keep_unmatched_records(self):
@@ -136,13 +139,18 @@ class CrudCoreTests(unittest.TestCase):
     def test_invalid_update_is_not_partial_and_id_is_read_only(self):
         rows = copy.deepcopy(ROWS)
         for changes in ({"ID": 3}, {"age": True}, {"name": "X", "unknown": 1}):
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
-                update(rows, changes, {"age": 28})
+            with (
+                self.subTest(changes=changes),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertIsNone(update(rows, changes, {"age": 28}))
             self.assertEqual(rows, ROWS)
-        with self.assertRaises(ValueError):
-            delete(rows, {})
-        with self.assertRaises(ValueError):
-            update(rows, {"age": 29}, {})
+        with (
+            patch("builtins.input", return_value="y"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertIsNone(delete(rows, {}))
+            self.assertIsNone(update(rows, {"age": 29}, {}))
 
 
 class CrudCliTests(unittest.TestCase):
@@ -185,7 +193,7 @@ class CrudCliTests(unittest.TestCase):
         output = self.cli('update users set age=29 where name="Sergei"\nexit\n')
         self.assertIn('Запись с ID=1 в таблице "users" успешно обновлена.', output)
         self.assertEqual(self.rows()[0]["age"], 29)
-        output = self.cli("delete from users where ID=1\ninfo users\nexit\n")
+        output = self.cli("delete from users where ID=1\ny\ninfo users\nexit\n")
         self.assertIn('Запись с ID=1 успешно удалена из таблицы "users".', output)
         self.assertIn("Количество записей: 1", output)
         self.cli('insert into users values ("B", 18, true)\nexit\n')
@@ -221,7 +229,7 @@ class CrudCliTests(unittest.TestCase):
             "delete from users\nselect from users where unknown=1\n"
             'select from users where age="28"\nexit\n'
         )
-        self.assertIn("Ошибка:", output)
+        self.assertIn("Ошибка валидации:", output)
         self.assertNotIn("успешно", output)
         self.assertEqual(self.path.read_bytes(), original)
 
@@ -269,12 +277,12 @@ class CrudCliTests(unittest.TestCase):
             with self.subTest(contents=contents):
                 self.path.write_text(contents, encoding="utf-8")
                 output = self.cli('insert into users values ("X", 1, true)\nexit\n')
-                self.assertIn("Ошибка:", output)
+                self.assertIn("Ошибка валидации:", output)
                 self.assertEqual(self.path.read_text(encoding="utf-8"), contents)
 
     def test_drop_removes_data_and_recreate_starts_empty(self):
         self.seed()
-        self.cli("drop_table users\nexit\n")
+        self.cli("drop_table users\ny\nexit\n")
         self.assertFalse(self.path.exists())
         self.cli(
             'create_table users name:str\ninsert into users values ("New")\nexit\n'
@@ -318,12 +326,12 @@ class StorageFailureTests(unittest.TestCase):
             with (
                 patch("primitive_db.utils.Path.replace", side_effect=PermissionError),
                 contextlib.redirect_stdout(io.StringIO()) as output,
-                self.assertRaises(PermissionError),
             ):
                 execute_crud(
                     METADATA, parse_command("update users set age=29 where ID=1")
                 )
             self.assertEqual(path.read_bytes(), original)
+            self.assertIn("Ошибка чтения или сохранения файла", output.getvalue())
             self.assertNotIn("успешно", output.getvalue())
             self.assertEqual(list(Path("data").glob("*.tmp")), [])
 
@@ -335,6 +343,7 @@ class StorageFailureTests(unittest.TestCase):
                 patch(
                     "primitive_db.engine.delete_table_data", side_effect=PermissionError
                 ),
+                patch("builtins.input", return_value="y"),
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 execute_table_command(copy.deepcopy(METADATA), "drop_table", ["users"])
