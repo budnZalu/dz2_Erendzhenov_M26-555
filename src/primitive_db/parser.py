@@ -1,42 +1,76 @@
 """Разбор CRUD-команд с сохранением кавычек и типов литералов."""
 
-import ast
-import re
-import warnings
-
-TOKEN = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s(),='"]+|[(),=]""")
-CRUD_COMMANDS = {"insert", "select", "update", "delete", "info"}
+import json
 
 
 def tokenize(text):
     """Разделить команду, сохранив строку с разделителями как один токен."""
     tokens = []
-    end = 0
-    for match in TOKEN.finditer(text):
-        if text[end : match.start()].strip():
-            raise ValueError("Некорректные кавычки в команде.")
-        tokens.append(match.group())
-        end = match.end()
-    if text[end:].strip():
-        raise ValueError("Некорректные кавычки в команде.")
+    position = 0
+    while position < len(text):
+        if text[position].isspace():
+            position += 1
+            continue
+        start = position
+        if text[position] in "(),=":
+            position += 1
+        elif text[position] in "\"'":
+            quote = text[position]
+            position += 1
+            while position < len(text):
+                if text[position] == "\\":
+                    position += 2
+                elif text[position] == quote:
+                    position += 1
+                    break
+                else:
+                    position += 1
+            else:
+                raise ValueError("Некорректные кавычки в команде.")
+        else:
+            while (
+                position < len(text)
+                and not text[position].isspace()
+                and text[position] not in "(),=\"'"
+            ):
+                position += 1
+        tokens.append(text[start:position])
     return tokens
+
+
+def _parse_string(token):
+    """Прочитать строку с JSON-экранированием и любым видом кавычек."""
+    quote = token[0]
+    if len(token) < 2 or token[-1] != quote:
+        raise ValueError(f"Некорректная строка: {token}.")
+    encoded = []
+    position = 1
+    while position < len(token) - 1:
+        char = token[position]
+        if char == "\\":
+            position += 1
+            if position >= len(token) - 1:
+                raise ValueError(f"Некорректная строка: {token}.")
+            escaped = token[position]
+            # JSON не требует экранировать апостроф, в одинарных кавычках нужно.
+            encoded.append("'" if escaped == "'" else "\\" + escaped)
+        elif char == quote:
+            raise ValueError(f"Некорректная строка: {token}.")
+        else:
+            encoded.append('\\"' if char == '"' else char)
+        position += 1
+    return json.loads('"' + "".join(encoded) + '"')
 
 
 def parse_value(token):
     """Прочитать int, bool или строку в кавычках без выполнения кода."""
     if token in {"true", "false"}:
         return token == "true"
-    if re.fullmatch(r"[+-]?[0-9]+", token):
+    digits = token[1:] if token.startswith(("+", "-")) else token
+    if digits and all(char in "0123456789" for char in digits):
         return int(token)
     if token.startswith(('"', "'")):
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", SyntaxWarning)
-                value = ast.literal_eval(token)
-        except (SyntaxError, ValueError) as error:
-            raise ValueError(f"Некорректная строка: {token}.") from error
-        if isinstance(value, str):
-            return value
+        return _parse_string(token)
     raise ValueError(
         f"Некорректное значение: {token}. "
         "Используйте целое число, true/false или строку в кавычках."
@@ -44,6 +78,7 @@ def parse_value(token):
 
 
 def _assignment(tokens):
+    """Разобрать ровно одно присваивание из трёх токенов."""
     if len(tokens) != 3 or tokens[1] != "=" or not tokens[0].isidentifier():
         raise ValueError("Ожидается условие вида <столбец> = <значение>.")
     return {tokens[0]: parse_value(tokens[2])}
@@ -55,6 +90,7 @@ def parse_where_clause(text):
 
 
 def _read_set(tokens):
+    """Прочитать присваивания SET и вернуть позицию следующего токена."""
     result = {}
     position = 0
     while True:
@@ -78,6 +114,7 @@ def parse_set_clause(text):
 
 
 def _table_name(token):
+    """Получить допустимое имя таблицы, в том числе из строки в кавычках."""
     name = parse_value(token) if token.startswith(('"', "'")) else token
     if not isinstance(name, str) or not name.isidentifier():
         raise ValueError(f"Некорректное имя таблицы: {token}.")

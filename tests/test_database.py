@@ -110,11 +110,31 @@ class StorageAndCliTests(unittest.TestCase):
     def test_failed_atomic_replace_preserves_original_file(self):
         save_metadata(self.path, {"users": ["ID:int"]})
         original = self.path.read_bytes()
-        with patch("primitive_db.utils.Path.replace", side_effect=PermissionError):
+        with patch("primitive_db.utils.os.replace", side_effect=PermissionError):
             with self.assertRaises(PermissionError):
                 save_metadata(self.path, {})
         self.assertEqual(self.path.read_bytes(), original)
         self.assertEqual(list(self.path.parent.glob("*.tmp")), [])
+
+    def test_failed_serialization_cleans_temporary_file_and_preserves_original(self):
+        save_metadata(self.path, {"users": ["ID:int"]})
+        original = self.path.read_bytes()
+        with self.assertRaises(TypeError):
+            save_metadata(self.path, {"unserializable": object()})
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(list(self.path.parent.glob("*.tmp")), [])
+
+    def test_temporary_file_collision_does_not_delete_or_overwrite_existing_file(self):
+        token = b"test"
+        temporary = self.path.parent / f".{self.path.name}.{token.hex()}.tmp"
+        temporary.write_text("existing temporary file")
+        with (
+            patch("primitive_db.utils.os.urandom", return_value=token),
+            self.assertRaises(FileExistsError),
+        ):
+            save_metadata(self.path, {})
+        self.assertEqual(temporary.read_text(), "existing temporary file")
+        self.assertFalse(self.path.exists())
 
     def test_create_list_and_drop_persist_across_processes(self):
         output = self.cli(

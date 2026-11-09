@@ -1,10 +1,12 @@
 """Интерфейс базы данных: команды, вывод таблиц и сохранение изменений."""
 
+import os
 import shlex
 
 import prompt
 from prettytable import PrettyTable
 
+from primitive_db.constants import COMMANDS, CRUD_COMMANDS, METADATA_FILE
 from primitive_db.core import (
     create_table,
     delete,
@@ -14,7 +16,7 @@ from primitive_db.core import (
     update,
 )
 from primitive_db.decorators import handle_db_errors
-from primitive_db.parser import CRUD_COMMANDS, parse_command
+from primitive_db.parser import parse_command
 from primitive_db.utils import (
     delete_table_data,
     load_metadata,
@@ -24,32 +26,6 @@ from primitive_db.utils import (
     table_data_path,
 )
 from primitive_db.validation import get_schema, validate_clause, validate_table_data
-
-METADATA_FILE = "db_meta.json"
-COMMANDS = {
-    "create_table": (
-        "create_table <имя_таблицы> <столбец1:тип> <столбец2:тип> ...",
-        "создать таблицу",
-    ),
-    "list_tables": ("list_tables", "показать список всех таблиц"),
-    "drop_table": ("drop_table <имя_таблицы>", "удалить таблицу и её данные"),
-    "insert": ("insert into <таблица> values (<значение1>, ...)", "создать запись"),
-    "select": (
-        "select from <таблица> [where <столбец> = <значение>]",
-        "прочитать записи",
-    ),
-    "update": (
-        "update <таблица> set <столбец> = <значение> where <столбец> = <значение>",
-        "обновить записи",
-    ),
-    "delete": (
-        "delete from <таблица> where <столбец> = <значение>",
-        "удалить записи",
-    ),
-    "info": ("info <таблица>", "структура таблицы и количество записей"),
-    "exit": ("exit", "выход из программы"),
-    "help": ("help", "справочная информация"),
-}
 
 
 def print_help() -> None:
@@ -151,7 +127,7 @@ def execute_table_command(metadata, command, arguments):
     if result is None:
         return
 
-    if command == "create_table" and table_data_path(table_name).exists():
+    if command == "create_table" and os.path.exists(table_data_path(table_name)):
         raise ValueError(
             f"Файл {table_data_path(table_name)} уже существует без схемы. "
             "Проверьте или перенесите его перед созданием таблицы."

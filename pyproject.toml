@@ -1,6 +1,6 @@
 [project]
 name = "primitive_db"
-version = "0.5.0"
+version = "0.6.0"
 description = "Учебное консольное приложение для работы с примитивной базой данных"
 readme = "README.md"
 authors = [
@@ -33,3 +33,7 @@ ignore = []
 dev = [
     "ruff>=0.17.4",
 ]
+
+# Совместимость с финальным чек-листом Poetry; uv использует группу выше.
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.17.4"

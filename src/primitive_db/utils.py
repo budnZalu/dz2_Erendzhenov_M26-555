@@ -1,8 +1,9 @@
 """Чтение и запись метаданных в формате JSON."""
 
 import json
-from pathlib import Path
-from tempfile import NamedTemporaryFile
+import os
+
+from primitive_db.constants import DATA_DIR, TEMP_TOKEN_BYTES
 
 
 def load_metadata(filepath):
@@ -26,38 +27,34 @@ def load_metadata(filepath):
 
 def save_metadata(filepath, data):
     """Сохранить JSON, заменив исходный файл только после успешной записи."""
-    path = Path(filepath)
-    temporary_path = None
+    path = os.fspath(filepath)
+    directory = os.path.dirname(path) or "."
+    token = os.urandom(TEMP_TOKEN_BYTES).hex()
+    temporary_path = os.path.join(directory, f".{os.path.basename(path)}.{token}.tmp")
+    created = False
     try:
-        with NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as file:
-            temporary_path = Path(file.name)
+        with open(temporary_path, "x", encoding="utf-8") as file:
+            created = True
             json.dump(data, file, ensure_ascii=False, indent=2)
             file.write("\n")
-        temporary_path.replace(path)
+        os.replace(temporary_path, path)
     finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+        if created and os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 def table_data_path(table_name):
     """Получить путь к данным, не позволяя использовать имя как путь."""
     if not table_name.isidentifier():
         raise ValueError(f"Некорректное имя таблицы: {table_name}.")
-    return Path("data") / f"{table_name}.json"
+    return os.path.join(DATA_DIR, f"{table_name}.json")
 
 
 def load_table_data(table_name):
     """Прочитать записи таблицы; отсутствие файла означает пустую таблицу."""
     path = table_data_path(table_name)
     try:
-        with path.open(encoding="utf-8") as file:
+        with open(path, encoding="utf-8") as file:
             data = json.load(file)
     except FileNotFoundError:
         return []
@@ -69,10 +66,13 @@ def load_table_data(table_name):
 def save_table_data(table_name, data):
     """Создать каталог data при необходимости и атомарно сохранить записи."""
     path = table_data_path(table_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     save_metadata(path, data)
 
 
 def delete_table_data(table_name):
     """Удалить файл данных при удалении таблицы."""
-    table_data_path(table_name).unlink(missing_ok=True)
+    try:
+        os.remove(table_data_path(table_name))
+    except FileNotFoundError:
+        pass

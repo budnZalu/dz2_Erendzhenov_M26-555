@@ -13,7 +13,12 @@ from unittest.mock import patch
 
 from primitive_db.core import delete, insert, select, update
 from primitive_db.engine import execute_crud, execute_table_command
-from primitive_db.parser import parse_command, parse_set_clause, parse_where_clause
+from primitive_db.parser import (
+    parse_command,
+    parse_set_clause,
+    parse_value,
+    parse_where_clause,
+)
 from primitive_db.utils import load_table_data, save_table_data
 
 METADATA = {"users": ["ID:int", "name:str", "age:int", "is_active:bool"]}
@@ -46,6 +51,33 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(command["values"][0], value)
         command = parse_command(r"insert into users values ('O\'Brien', 28, true)")
         self.assertEqual(command["values"][0], "O'Brien")
+
+    def test_unicode_and_json_escapes_with_both_quote_styles(self):
+        for literal, expected in (
+            ('"Привет, мир"', "Привет, мир"),
+            (r'"line\nnext\t\u0410"', "line\nnext\tА"),
+            (r"'Он сказал: \"да\"'", 'Он сказал: "да"'),
+            (r"'C:\\temp\\file'", "C:\\temp\\file"),
+            (r'"O\'Brien"', "O'Brien"),
+        ):
+            with self.subTest(literal=literal):
+                parsed = parse_command(f"insert into users values ({literal}, 1, true)")
+                self.assertEqual(parsed["values"][0], expected)
+
+    def test_invalid_escapes_quotes_and_numeric_literals_are_rejected(self):
+        for literal in (
+            r'"bad\q"',
+            r"'bad\q'",
+            '"unfinished',
+            '"trailing\\',
+            '"unescaped"quote"',
+            "+",
+            "--1",
+            "1_000",
+            "١",
+        ):
+            with self.subTest(literal=literal), self.assertRaises(ValueError):
+                parse_value(literal)
 
     def test_where_and_multiple_set_assignments(self):
         self.assertEqual(parse_where_clause("age=28"), {"age": 28})
@@ -324,7 +356,7 @@ class StorageFailureTests(unittest.TestCase):
             path = Path("data/users.json")
             original = path.read_bytes()
             with (
-                patch("primitive_db.utils.Path.replace", side_effect=PermissionError),
+                patch("primitive_db.utils.os.replace", side_effect=PermissionError),
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 execute_crud(

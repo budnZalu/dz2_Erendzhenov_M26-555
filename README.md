@@ -12,15 +12,19 @@
 
 ## Установка и запуск
 
-Установите [uv](https://docs.astral.sh/uv/getting-started/installation/),
-затем выполните:
+Установите [uv](https://docs.astral.sh/uv/getting-started/installation/)
+и `make` (GNU Make или системный Make), затем выполните:
 
 ```sh
 git clone https://github.com/budnZalu/dz2_Erendzhenov_M26-555.git
 cd dz2_Erendzhenov_M26-555
-uv sync
-uv run database
+make install
+make run
 ```
+
+`make install` выполняет `uv sync --locked`, а `make run` —
+`uv run --locked database`. Makefile сохраняет управление через uv из первой
+части задания и предоставляет команды из финального чек-листа.
 
 Также доступны `uv run python -m primitive_db.main` и прежняя команда
 `uv run project`. После `source .venv/bin/activate` можно запускать `database`
@@ -92,7 +96,9 @@ uv run database
 строго: `28` — число, `"28"` — строка, `true` и `false` — логические значения.
 Строки обязательно заключаются в одинарные или двойные кавычки; пустая
 строка `""` допустима для `str`. В строках поддерживаются пробелы, запятые,
-скобки и экранированные кавычки. Например: `"Он сказал: \"привет\""`.
+скобки и экранированные кавычки. Для управляющих символов используется
+JSON-экранирование (`\n`, `\t`, `\u0410`); также разрешено `\'`.
+Например: `"Он сказал: \"привет\""`.
 
 Условие `where` — одно равенство. Для `update` и `delete` оно обязательно;
 для `select` может отсутствовать. В `set` можно указать несколько полей
@@ -144,8 +150,9 @@ ID вычисляется как `max(ID существующих записей
 ## Декораторы и замыкания
 
 Модуль `src/primitive_db/decorators.py` входит в устанавливаемый пакет.
-Все декораторы используют `functools.wraps`, сохраняя имя, документацию и
-ссылку `__wrapped__` исходной функции.
+Все декораторы сохраняют имя, документацию и ссылку `__wrapped__` исходной
+функции через общий помощник `_preserve_metadata`. Это позволяет соблюдать
+ограничение на стандартные модули из финального чек-листа.
 
 - `handle_db_errors` оборачивает все шесть операций `core.py` и обработчики
   команд в `engine.py`. Он перехватывает `KeyError`, `ValueError`,
@@ -235,28 +242,48 @@ ID вычисляется как `max(ID существующих записей
 ## Проверки
 
 ```sh
-uv run ruff check .
-uv run ruff format --check .
-uv run python -m unittest discover -s tests -v
+make lint
+make format-check
+make test
+# Все три проверки одной командой:
+make check
 ```
 
-53 теста проверяют управление таблицами, CRUD, генерацию ID, строгие типы,
+57 тестов проверяют управление таблицами, CRUD, генерацию ID, строгие типы,
 кавычки и разделители в строках, обязательные поля, несколько совпадений,
 сохранение между запусками, повреждённые файлы, ошибки записи, удаление
 данных вместе с таблицей, Ctrl+C и завершение ввода. Дополнительно проверяются
 подтверждение и отмена операций, сохранность файлов при отмене, точный формат
 таймера, сохранение метаданных функций, повторное использование кэша,
-независимость копий и актуальность выборок после изменения данных.
+независимость копий и актуальность выборок после изменения данных. Проверяются
+также Unicode и экранирование строк, очистка временного файла при ошибке
+сериализации и сохранность чужого временного файла при совпадении имени.
+
+В `.github/workflows/check.yml` настроены проверки на каждый push и pull
+request: `make install`, `make check`, `make build` на Python 3.12.
+[Результаты GitHub Actions](https://github.com/budnZalu/dz2_Erendzhenov_M26-555/actions/workflows/check.yml).
+Это проверки репозитория; результаты отдельных закрытых тестов учебной
+платформы нужно смотреть на самой платформе после отправки проекта.
 
 Ruff установлен только для разработки. Включены правила `E`, `F`, `I`,
-максимальная длина строки 88 и целевая версия Python 3.12.
+максимальная длина строки 88 и целевая версия Python 3.12. Для uv зависимость
+находится в `[dependency-groups].dev`, для совместимости с Poetry также
+указана в `[tool.poetry.group.dev.dependencies]`; в runtime её нет.
+`poetry check --strict` проверяет совместимость конфигурации.
+
+Код приложения использует только стандартные `json`, `shlex`, `time`, `os`
+и внешние `prettytable`, `prompt`. Классов в `src/primitive_db` нет;
+все операции реализованы функциями. Автотесты находятся отдельно в `tests/`.
+Общие имена файлов, команд и типов вынесены в `constants.py`.
+Разработка ведётся в тематических ветках `codex/`, которые после проверок
+объединяются с `main`; история содержит отдельные коммиты этапов проекта.
 
 ## Сборка и установка CLI из wheel
 
 ```sh
-uv build
+make build
 uvx twine check dist/*
-uv tool install --upgrade dist/primitive_db-0.5.0-py3-none-any.whl
+uv tool install --upgrade dist/primitive_db-0.6.0-py3-none-any.whl
 database
 ```
 
@@ -266,6 +293,21 @@ Wheel устанавливается в отдельное окружение uv
 в `PATH`, выполните `uv tool update-shell` и перезапустите терминал.
 
 ## Демонстрация
+
+Запись для сдачи версии 0.6.0:
+
+[![Полный сценарий для сдачи](https://asciinema.org/a/ajTCMpjBuR06udhX.svg)](https://asciinema.org/a/ajTCMpjBuR06udhX)
+
+Установка через `make install`, проверка `make lint`, запуск `make run`,
+создание таблицы, вставка, выборка, обновление, удаление записей и таблицы.
+Также показаны обработка ошибки, повторная выборка и отмена удаления.
+Файл записи хранится в репозитории: [submission-demo.cast](docs/submission-demo.cast).
+
+```sh
+uvx --from asciinema asciinema play docs/submission-demo.cast
+```
+
+Предыдущий этап — декораторы и замыкания:
 
 [![Финальная демонстрация](https://asciinema.org/a/kyGC0EfauYZ8qAoW.svg)](https://asciinema.org/a/kyGC0EfauYZ8qAoW)
 
@@ -305,13 +347,18 @@ uvx --from asciinema asciinema play docs/demo.cast
 
 ```text
 dz2_Erendzhenov_M26-555/
+├── .github/
+│   └── workflows/
+│       └── check.yml
 ├── docs/
 │   ├── demo.cast
 │   ├── crud-demo.cast
-│   └── final-demo.cast
+│   ├── final-demo.cast
+│   └── submission-demo.cast
 ├── src/
 │   └── primitive_db/
 │       ├── __init__.py
+│       ├── constants.py
 │       ├── core.py
 │       ├── decorators.py
 │       ├── engine.py
@@ -325,11 +372,13 @@ dz2_Erendzhenov_M26-555/
 │   └── test_decorators.py
 ├── .gitignore
 ├── .python-version
+├── Makefile
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
 ```
 
+`constants.py` хранит общие константы.
 `core.py` управляет таблицами и выполняет CRUD. `validation.py` проверяет
 схемы и типы; `decorators.py` содержит три декоратора и фабрику кэша.
 `parser.py` разбирает CRUD-команды, сохраняя кавычки и типы значений.

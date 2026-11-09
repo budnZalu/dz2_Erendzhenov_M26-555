@@ -1,13 +1,26 @@
 """Общие обёртки операций базы данных и кэш в замыкании."""
 
 import time
-from functools import wraps
+
+
+def _preserve_metadata(wrapper, func):
+    """Сохранить метаданные функции без дополнительных стандартных модулей."""
+    for name in (
+        "__name__",
+        "__qualname__",
+        "__doc__",
+        "__module__",
+        "__annotations__",
+    ):
+        if hasattr(func, name):
+            setattr(wrapper, name, getattr(func, name))
+    wrapper.__wrapped__ = func
+    return wrapper
 
 
 def handle_db_errors(func):
     """Вывести понятную ошибку и вернуть None вместо неуспешного результата."""
 
-    @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -26,14 +39,13 @@ def handle_db_errors(func):
             print(f"Произошла непредвиденная ошибка: {error}")
         return None
 
-    return wrapper
+    return _preserve_metadata(wrapper, func)
 
 
 def confirm_action(action_name):
     """Выполнить операцию только после ответа y; отмену обозначить None."""
 
     def decorator(func):
-        @wraps(func)
         def wrapper(*args, **kwargs):
             try:
                 answer = input(
@@ -47,7 +59,7 @@ def confirm_action(action_name):
                 return None
             return func(*args, **kwargs)
 
-        return wrapper
+        return _preserve_metadata(wrapper, func)
 
     return decorator
 
@@ -55,7 +67,6 @@ def confirm_action(action_name):
 def log_time(func):
     """Измерить время вызова, включая завершившийся исключением вызов."""
 
-    @wraps(func)
     def wrapper(*args, **kwargs):
         started = time.monotonic()
         try:
@@ -64,7 +75,7 @@ def log_time(func):
             elapsed = time.monotonic() - started
             print(f"Функция {func.__name__} выполнилась за {elapsed:.3f} секунд")
 
-    return wrapper
+    return _preserve_metadata(wrapper, func)
 
 
 def create_cacher():
