@@ -1,6 +1,6 @@
 [project]
 name = "primitive_db"
-version = "0.2.0"
+version = "0.3.0"
 description = "Учебное консольное приложение для работы с примитивной базой данных"
 readme = "README.md"
 authors = [
@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
+database = "primitive_db.main:main"
 project = "primitive_db.main:main"
 
 [build-system]
