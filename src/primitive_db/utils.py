@@ -44,3 +44,35 @@ def save_metadata(filepath, data):
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def table_data_path(table_name):
+    """Получить путь к данным, не позволяя использовать имя как путь."""
+    if not table_name.isidentifier():
+        raise ValueError(f"Некорректное имя таблицы: {table_name}.")
+    return Path("data") / f"{table_name}.json"
+
+
+def load_table_data(table_name):
+    """Прочитать записи таблицы; отсутствие файла означает пустую таблицу."""
+    path = table_data_path(table_name)
+    try:
+        with path.open(encoding="utf-8") as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        return []
+    if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
+        raise ValueError(f"Файл {path} должен содержать список записей-словарей.")
+    return data
+
+
+def save_table_data(table_name, data):
+    """Создать каталог data при необходимости и атомарно сохранить записи."""
+    path = table_data_path(table_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_metadata(path, data)
+
+
+def delete_table_data(table_name):
+    """Удалить файл данных при удалении таблицы."""
+    table_data_path(table_name).unlink(missing_ok=True)

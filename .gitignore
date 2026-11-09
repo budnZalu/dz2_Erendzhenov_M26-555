@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 db_meta.json
 .db_meta.json.*.tmp
+data/
