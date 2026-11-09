@@ -373,13 +373,31 @@ class StorageFailureTests(unittest.TestCase):
             save_table_data("users", ROWS)
             with (
                 patch(
-                    "primitive_db.engine.delete_table_data", side_effect=PermissionError
+                    "primitive_db.utils.delete_table_data", side_effect=PermissionError
                 ),
                 patch("builtins.input", return_value="y"),
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 execute_table_command(copy.deepcopy(METADATA), "drop_table", ["users"])
             self.assertEqual(json.loads(Path("db_meta.json").read_text()), METADATA)
+            self.assertEqual(load_table_data("users"), ROWS)
+            self.assertNotIn("успешно удалена", output.getvalue())
+
+    def test_drop_metadata_write_failure_keeps_data_and_in_memory_schema(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.chdir(directory):
+            metadata = copy.deepcopy(METADATA)
+            path = Path("db_meta.json")
+            path.write_text(json.dumps(metadata))
+            original = path.read_bytes()
+            save_table_data("users", ROWS)
+            with (
+                patch("primitive_db.utils.save_metadata", side_effect=PermissionError),
+                patch("builtins.input", return_value="y"),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                execute_table_command(metadata, "drop_table", ["users"])
+            self.assertEqual(metadata, METADATA)
+            self.assertEqual(path.read_bytes(), original)
             self.assertEqual(load_table_data("users"), ROWS)
             self.assertNotIn("успешно удалена", output.getvalue())
 

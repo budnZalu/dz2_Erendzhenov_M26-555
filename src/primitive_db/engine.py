@@ -1,12 +1,17 @@
 """Интерфейс базы данных: команды, вывод таблиц и сохранение изменений."""
 
-import os
 import shlex
 
 import prompt
 from prettytable import PrettyTable
 
-from primitive_db.constants import COMMANDS, CRUD_COMMANDS, METADATA_FILE
+from primitive_db.constants import (
+    COMMANDS,
+    CRUD_COMMANDS,
+    ID_COLUMN,
+    ID_DEFINITION,
+    METADATA_FILE,
+)
 from primitive_db.core import (
     create_table,
     delete,
@@ -18,12 +23,12 @@ from primitive_db.core import (
 from primitive_db.decorators import handle_db_errors
 from primitive_db.parser import parse_command
 from primitive_db.utils import (
-    delete_table_data,
+    ensure_table_data_absent,
     load_metadata,
     load_table_data,
     save_metadata,
     save_table_data,
-    table_data_path,
+    save_table_removal,
 )
 from primitive_db.validation import get_schema, validate_clause, validate_table_data
 
@@ -34,7 +39,9 @@ def print_help() -> None:
     for usage, description in COMMANDS.values():
         print(f"<command> {usage} - {description}")
     print("\nТипы: int, str, bool. Строки — в кавычках; bool — true или false.")
-    print("ID:int генерируется автоматически; в insert его передавать не нужно.")
+    print(
+        f"{ID_DEFINITION} генерируется автоматически; в insert его передавать не нужно."
+    )
     print("Удаление таблиц и записей требует подтверждения: y — да, иначе отмена.\n")
 
 
@@ -74,7 +81,7 @@ def execute_crud(metadata, parsed):
             return
         save_table_data(table_name, table_data)
         print(
-            f"Запись с ID={table_data[-1]['ID']} "
+            f"Запись с {ID_COLUMN}={table_data[-1][ID_COLUMN]} "
             f'успешно добавлена в таблицу "{table_name}".'
         )
     else:
@@ -96,12 +103,12 @@ def execute_crud(metadata, parsed):
         for row in matched:
             if command == "update":
                 print(
-                    f'Запись с ID={row["ID"]} в таблице "{table_name}" '
+                    f'Запись с {ID_COLUMN}={row[ID_COLUMN]} в таблице "{table_name}" '
                     "успешно обновлена."
                 )
             else:
                 print(
-                    f"Запись с ID={row['ID']} успешно удалена "
+                    f"Запись с {ID_COLUMN}={row[ID_COLUMN]} успешно удалена "
                     f'из таблицы "{table_name}".'
                 )
 
@@ -127,19 +134,13 @@ def execute_table_command(metadata, command, arguments):
     if result is None:
         return
 
-    if command == "create_table" and os.path.exists(table_data_path(table_name)):
-        raise ValueError(
-            f"Файл {table_data_path(table_name)} уже существует без схемы. "
-            "Проверьте или перенесите его перед созданием таблицы."
+    if command == "create_table":
+        ensure_table_data_absent(table_name)
+        save_metadata(METADATA_FILE, updated_metadata)
+    else:
+        save_table_removal(
+            METADATA_FILE, previous_metadata, updated_metadata, table_name
         )
-    save_metadata(METADATA_FILE, updated_metadata)
-    if command == "drop_table":
-        try:
-            delete_table_data(table_name)
-        except OSError:
-            # Это откат записи, а сообщение об ошибке выводит декоратор.
-            save_metadata(METADATA_FILE, previous_metadata)
-            raise
     metadata.clear()
     metadata.update(updated_metadata)
 

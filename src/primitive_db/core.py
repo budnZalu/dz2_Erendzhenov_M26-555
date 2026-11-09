@@ -1,5 +1,6 @@
 """Управление схемами таблиц и операции над записями."""
 
+from primitive_db.constants import ID_COLUMN
 from primitive_db.decorators import (
     confirm_action,
     create_cacher,
@@ -42,7 +43,7 @@ def drop_table(metadata, table_name):
 def insert(metadata, table_name, values, table_data=None):
     """Добавить типизированную запись с новым ID и вернуть данные таблицы."""
     schema = get_schema(metadata, table_name)
-    columns = [name for name in schema if name != "ID"]
+    columns = [name for name in schema if name != ID_COLUMN]
     if len(values) != len(columns):
         raise ValueError(
             f"Ожидается {len(columns)} значений без ID, получено {len(values)}. "
@@ -53,8 +54,8 @@ def insert(metadata, table_name, values, table_data=None):
     if table_data is None:
         table_data = load_table_data(table_name)
     validate_table_data(schema, table_data)
-    new_id = max((row["ID"] for row in table_data), default=0) + 1
-    table_data.append({"ID": new_id, **record})
+    new_id = max((row[ID_COLUMN] for row in table_data), default=0) + 1
+    table_data.append({ID_COLUMN: new_id, **record})
     return table_data
 
 
@@ -89,8 +90,8 @@ def update(table_data, set_clause, where_clause):
     """Проверить изменения, обновить все совпадения и вернуть данные."""
     if not set_clause or not where_clause:
         raise ValueError("Для update нужны непустые SET и WHERE.")
-    if "ID" in set_clause:
-        raise ValueError("Изменять ID нельзя: он генерируется автоматически.")
+    if ID_COLUMN in set_clause:
+        raise ValueError(f"Изменять {ID_COLUMN} нельзя: он генерируется автоматически.")
     matched = [row for row in table_data if _matches(row, where_clause)]
     for row in matched:
         for name, value in set_clause.items():

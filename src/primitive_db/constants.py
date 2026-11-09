@@ -1,6 +1,13 @@
 """Имена файлов, допустимые типы и команды консольной базы данных."""
 
 DATA_DIR = "data"
+TEXT_ENCODING = "utf-8"
+JSON_INDENT = 2
+JSON_SUFFIX = ".json"
+TEMP_SUFFIX = ".tmp"
+ID_COLUMN = "ID"
+ID_TYPE = "int"
+ID_DEFINITION = f"{ID_COLUMN}:{ID_TYPE}"
 SUPPORTED_TYPES = {"int": int, "str": str, "bool": bool}
 CRUD_COMMANDS = {"insert", "select", "update", "delete", "info"}
 TEMP_TOKEN_BYTES = 8  # Случайный суффикс временного файла: 16 hex-символов.

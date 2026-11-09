@@ -1,6 +1,6 @@
 """Проверки данных: исключения обрабатывает декоратор вызывающей операции."""
 
-from primitive_db.constants import SUPPORTED_TYPES
+from primitive_db.constants import ID_COLUMN, ID_DEFINITION, ID_TYPE, SUPPORTED_TYPES
 
 
 def normalize_columns(columns):
@@ -11,7 +11,7 @@ def normalize_columns(columns):
         )
 
     names = set()
-    result = ["ID:int"]
+    result = [ID_DEFINITION]
     for column in columns:
         name, separator, data_type = column.partition(":")
         if (
@@ -19,11 +19,11 @@ def normalize_columns(columns):
             or not name.isidentifier()
             or data_type not in SUPPORTED_TYPES
             or name in names
-            or (name == "ID" and data_type != "int")
+            or (name == ID_COLUMN and data_type != ID_TYPE)
         ):
             raise ValueError(f"Некорректное значение: {column}. Попробуйте снова.")
         names.add(name)
-        if name != "ID":
+        if name != ID_COLUMN:
             result.append(column)
     return result
 
@@ -45,8 +45,10 @@ def validate_clause(schema, clause, *, updating=False):
     for name, value in clause.items():
         if name not in schema:
             raise ValueError(f'Столбец "{name}" не существует.')
-        if updating and name == "ID":
-            raise ValueError("Изменять ID нельзя: он генерируется автоматически.")
+        if updating and name == ID_COLUMN:
+            raise ValueError(
+                f"Изменять {ID_COLUMN} нельзя: он генерируется автоматически."
+            )
         if type(value) is not SUPPORTED_TYPES[schema[name]]:
             raise ValueError(
                 f"Некорректное значение: {value!r}. "
@@ -61,8 +63,8 @@ def validate_table_data(schema, table_data):
         if set(row) != set(schema):
             raise ValueError("Запись не соответствует схеме: все поля обязательны.")
         validate_clause(schema, row)
-        if row["ID"] <= 0 or row["ID"] in ids:
+        if row[ID_COLUMN] <= 0 or row[ID_COLUMN] in ids:
             raise ValueError(
-                "ID в файле данных должны быть положительными и уникальными."
+                f"{ID_COLUMN} в файле данных должны быть положительными и уникальными."
             )
-        ids.add(row["ID"])
+        ids.add(row[ID_COLUMN])
